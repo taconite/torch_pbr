@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
+import tinycudann as tcnn
 
 # import models
 
@@ -580,3 +581,76 @@ class EnvironmentLightSG(torch.nn.Module):
         )
 
         return envmap.detach().cpu().numpy()
+
+
+# @models.register("envlight-mlp")
+class EnvironmentLightMLP(torch.nn.Module):
+    def __init__(self, config):
+        super(EnvironmentLightMLP, self).__init__()
+        if isinstance(config.envlight_config.base_res, int):
+            self.base_res = (
+                config.envlight_config.base_res,
+                config.envlight_config.base_res,
+            )
+        else:
+            self.base_res = config.envlight_config.base_res
+
+        self.dir_encoder = tcnn.Encoding(
+            n_input_dims=3,
+            encoding_config={
+                "otype": "SphericalHarmonics",
+                "degree": 4,
+            },
+        )
+        self.net = tcnn.Network(
+            n_input_dims=self.dir_encoder.n_output_dims,
+            n_output_dims=3,
+            network_config={
+                "otype": "FullyFusedMLP",
+                "activation": "ReLU",
+                "output_activation": "ReLU",
+                "n_neurons": 128,
+                "n_hidden_layers": 2,
+            },
+        )
+
+    def eval(self, directions):
+        """
+        Evaluate the environment light intensities at the given directions
+        Args:
+            directions: A tensor of shape (N, 3) containing unit vectors
+        Returns:
+            A tensor of shape (N, C) containing the environment light intensities at the input directions
+        """
+        d = (directions + 1.) / 2.  # (-1, 1) => (0, 1)
+        d = self.dir_encoder(d)
+        intensity = self.net(d).float()
+        return intensity
+        # # Convert the 3D directions to 2D indices in the environment map
+        # # Assume the azimuth (phi) is in [-pi, pi] and the elevation (theta) is in [0, pi]
+        # phi = torch.atan2(directions[:, 1], directions[:, 0])  # Compute azimuth angle
+        # theta = torch.acos(directions[:, 2])  # Compute elevation angle
+        # u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
+        # v = theta / np.pi  # Map elevation to [0, 1]
+        # assert (u >= 0).all() and (u <= 1).all()
+        # assert (v >= 0).all() and (v <= 1).all()
+
+        # # Create a grid for grid_sample. The grid values should be in the range of [-1, 1]
+        # grid = torch.stack([u * 2 - 1, v * 2 - 1], dim=-1).reshape(1, 1, -1, 2)
+
+        # # Add a batch dimension to the environment map for grid_sample
+        # base_batch = self.base.unsqueeze(0).permute(0, 3, 1, 2)
+
+        # # Use grid_sample for interpolation. The function assumes the grid values to be in the range of [-1, 1]
+        # intensity = torch.nn.functional.grid_sample(
+        #     base_batch,
+        #     grid,
+        #     mode="bilinear",
+        #     padding_mode="border",
+        #     align_corners=True,
+        # )
+
+        # # Squeeze the batch dimension and transpose the result to match the input shape
+        # intensity = intensity.reshape(self.base.shape[-1], -1).transpose(0, 1)
+
+        # return F.softplus(intensity, beta=100)
