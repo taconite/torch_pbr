@@ -119,9 +119,9 @@ class EnvironmentLightBase(torch.nn.Module):
 
 
 # @models.register("envlight-tensor")
-class EnvironmentLightTensor(torch.nn.Module):
+class EnvironmentLightTensor(EnvironmentLightBase):
     def __init__(self, config):
-        super(EnvironmentLightTensor, self).__init__()
+        super(EnvironmentLightTensor, self).__init__(config)
         # self.mtx = None
         scale = config.envlight_config.scale
         bias = config.envlight_config.bias
@@ -337,9 +337,9 @@ class EnvironmentLightTensor(torch.nn.Module):
 
 # TODO: there should be a way to analytically derived the sample() and pdf() functions
 # @models.register("envlight-SG")
-class EnvironmentLightSG(torch.nn.Module):
+class EnvironmentLightSG(EnvironmentLightBase):
     def __init__(self, config):
-        super(EnvironmentLightSG, self).__init__()
+        super(EnvironmentLightSG, self).__init__(config)
         self.num_SGs = config.envlight_config.num_SGs
         if isinstance(config.envlight_config.base_res, int):
             self.base_res = (
@@ -584,9 +584,9 @@ class EnvironmentLightSG(torch.nn.Module):
 
 
 # @models.register("envlight-mlp")
-class EnvironmentLightMLP(torch.nn.Module):
+class EnvironmentLightMLP(EnvironmentLightBase):
     def __init__(self, config):
-        super(EnvironmentLightMLP, self).__init__()
+        super(EnvironmentLightMLP, self).__init__(config)
         if isinstance(config.envlight_config.base_res, int):
             self.base_res = (
                 config.envlight_config.base_res,
