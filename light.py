@@ -17,9 +17,6 @@ class EnvironmentLightBase(torch.nn.Module):
     def __init__(self, config):
         super(EnvironmentLightBase, self).__init__()
 
-    def parameters(self):
-        raise NotImplementedError("EnvironmentLightBase is an abstract class")
-
     # def clone(self):
     #     raise NotImplementedError("EnvironmentLightBase is an abstract class")
 
@@ -610,7 +607,7 @@ class EnvironmentLightMLP(EnvironmentLightBase):
                 "activation": "ReLU",
                 "output_activation": "ReLU",
                 "n_neurons": 128,
-                "n_hidden_layers": 2,
+                "n_hidden_layers": 3,
             },
         )
 
@@ -626,31 +623,29 @@ class EnvironmentLightMLP(EnvironmentLightBase):
         d = self.dir_encoder(d)
         intensity = self.net(d).float()
         return intensity
-        # # Convert the 3D directions to 2D indices in the environment map
-        # # Assume the azimuth (phi) is in [-pi, pi] and the elevation (theta) is in [0, pi]
-        # phi = torch.atan2(directions[:, 1], directions[:, 0])  # Compute azimuth angle
-        # theta = torch.acos(directions[:, 2])  # Compute elevation angle
-        # u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
-        # v = theta / np.pi  # Map elevation to [0, 1]
-        # assert (u >= 0).all() and (u <= 1).all()
-        # assert (v >= 0).all() and (v <= 1).all()
 
-        # # Create a grid for grid_sample. The grid values should be in the range of [-1, 1]
-        # grid = torch.stack([u * 2 - 1, v * 2 - 1], dim=-1).reshape(1, 1, -1, 2)
+    @torch.no_grad()
+    def generate_image(self):
+        # Evaluate SGs at the pixel centers
+        XY = util.pixel_grid(self.base_res[1], self.base_res[0])
 
-        # # Add a batch dimension to the environment map for grid_sample
-        # base_batch = self.base.unsqueeze(0).permute(0, 3, 1, 2)
+        # Convert the (u, v) \in [0, 1]^2 to spherical coordinates
+        theta = XY[..., 1] * np.pi
+        phi = XY[..., 0] * np.pi * 2 - np.pi
 
-        # # Use grid_sample for interpolation. The function assumes the grid values to be in the range of [-1, 1]
-        # intensity = torch.nn.functional.grid_sample(
-        #     base_batch,
-        #     grid,
-        #     mode="bilinear",
-        #     padding_mode="border",
-        #     align_corners=True,
-        # )
+        # Convert spherical coordinates to 3D direction vectors
+        sin_theta = torch.sin(theta)
+        cos_theta = torch.cos(theta)
+        sin_phi = torch.sin(phi)
+        cos_phi = torch.cos(phi)
 
-        # # Squeeze the batch dimension and transpose the result to match the input shape
-        # intensity = intensity.reshape(self.base.shape[-1], -1).transpose(0, 1)
+        directions = torch.stack(
+            [cos_phi * sin_theta, sin_phi * sin_theta, cos_theta], dim=-1
+        )
+        directions = F.normalize(directions.reshape(-1, 3), dim=1)
+        # Compute envmap from MLP
+        envmap = self.eval(directions).reshape(
+            self.base_res[0], self.base_res[1], -1
+        )
 
-        # return F.softplus(intensity, beta=100)
+        return envmap.detach().cpu().numpy()
