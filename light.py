@@ -5,6 +5,7 @@ import tinycudann as tcnn
 
 # import models
 
+from omegaconf import OmegaConf
 from .utils import nvdiffrecmc_util as util
 from .utils.light_utils import compute_energy, fibonacci_sphere, eval_SGs
 
@@ -605,7 +606,7 @@ class EnvironmentLightMLP(EnvironmentLightBase):
             network_config={
                 "otype": "FullyFusedMLP",
                 "activation": "ReLU",
-                "output_activation": "ReLU",
+                "output_activation": "Softplus",
                 "n_neurons": 128,
                 "n_hidden_layers": 3,
             },
@@ -805,6 +806,224 @@ class EnvironmentLightMLP(EnvironmentLightBase):
         directions = F.normalize(directions.reshape(-1, 3), dim=1)
         # Compute envmap from the MLP
         envmap = self.eval(directions).reshape(
+            self.base_res[0], self.base_res[1], -1
+        )
+
+        return envmap.detach().cpu().numpy()
+
+
+def config_to_primitive(config, resolve=True):
+    return OmegaConf.to_container(config, resolve=resolve)
+
+
+# @models.register("envlight-mlp")
+class EnvironmentLightNGP(EnvironmentLightBase):
+    def __init__(self, config):
+        super(EnvironmentLightNGP, self).__init__(config)
+        if isinstance(config.envlight_config.base_res, int):
+            self.base_res = (
+                config.envlight_config.base_res,
+                config.envlight_config.base_res,
+            )
+        else:
+            self.base_res = config.envlight_config.base_res
+
+        self.net = tcnn.NetworkWithInputEncoding(
+            n_input_dims=2,
+            n_output_dims=3,
+            encoding_config=config_to_primitive(config.envlight_config.encoding_config),
+            network_config=config_to_primitive(
+                config.envlight_config.mlp_network_config
+            ),
+        )
+
+        self.pdf_scale = (self.base_res[0] * self.base_res[1]) / (2 * np.pi * np.pi)
+        self.update_pdf()
+
+    @torch.no_grad()
+    def pdf(self, directions):
+        """
+        Compute the PDFs of the given directions based on the environment map
+        Args:
+            directions: A tensor of shape (N, 3) containing unit vectors
+        Returns:
+            A tensor of shape (N,) containing the PDFs for each input direction
+        """
+        # Convert the 3D directions to 2D indices in the environment map
+        phi = torch.atan2(directions[:, 1], directions[:, 0])  # Compute azimuth angle
+        theta = torch.acos(directions[:, 2])  # Compute elevation angle
+        u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
+        v = theta / np.pi  # Map elevation to [0, 1]
+
+        # Convert u, v to discrete indices
+        col_indices = torch.clamp(
+            torch.floor(u * (self.cols.shape[1] - 1)), min=0, max=self.cols.shape[1] - 2
+        )
+        row_indices = torch.clamp(
+            torch.floor(v * (self.rows.shape[0] - 1)), min=0, max=self.rows.shape[0] - 2
+        )
+
+        # Get PDF values at the indices
+        sin_theta = torch.sin(theta)
+        pdf_values = torch.where(
+            sin_theta > 0,
+            self._pdf[row_indices.long(), col_indices.long()]
+            * self.pdf_scale
+            / sin_theta,
+            torch.zeros_like(sin_theta),
+        )
+
+        return pdf_values.unsqueeze(-1)
+
+    def eval_uv(self, uv):
+        """
+        Evaluate the environment light intensities at the given uv coordinates
+        Args:
+            uv: A tensor of shape (N, 2) containing uv coordinates
+        Returns:
+            A tensor of shape (N, C) containing the environment light intensities at the input directions
+        """
+        assert (uv >= 0).all() and (uv <= 1).all()
+
+        return self.net(uv).float()
+
+    def eval(self, directions):
+        """
+        Evaluate the environment light intensities at the given directions
+        Args:
+            directions: A tensor of shape (N, 3) containing unit vectors
+        Returns:
+            A tensor of shape (N, C) containing the environment light intensities at the input directions
+        """
+        # Convert the 3D directions to 2D indices in the environment map
+        # Assume the azimuth (phi) is in [-pi, pi] and the elevation (theta) is in [0, pi]
+        phi = torch.atan2(directions[:, 1], directions[:, 0])  # Compute azimuth angle
+        theta = torch.acos(directions[:, 2])  # Compute elevation angle
+        u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
+        v = theta / np.pi  # Map elevation to [0, 1]
+        assert (u >= 0).all() and (u <= 1).all()
+        assert (v >= 0).all() and (v <= 1).all()
+
+        # Create a grid for grid_sample. The grid values should be in the range of [0, 1]
+        uv = torch.stack([u, v], dim=-1)
+
+        return self.net(uv).float()
+
+    @torch.no_grad()
+    def sample(self, num_samples: int):
+        """
+        Importance sample continuous locations on the environment light based on discrete CDFs
+        Args:
+            num_samples: Number of samples to generate
+        Returns:
+            A tuple (indices, pdfs) where:
+                indices: A tensor of shape (num_samples, 2) containing sampled row and column indices
+                pdfs: A tensor of shape (num_samples,) containing the pdf values of the sampled indices
+        """
+        # Generate random numbers for rows and columns
+        u1 = torch.rand(num_samples, device=self.rows.device)
+        u2 = (
+            torch.rand(num_samples, device=self.rows.device)
+            .reshape(-1, 1)
+            .contiguous()
+        )
+
+        # Find the row indices based on the random numbers u1 and the row CDF
+        # TODO: check for divide-by-zero cases - probably not needed
+        row_indices = torch.searchsorted(self.rows[:, 0].contiguous(), u1, right=True)
+        below = torch.max(torch.zeros_like(row_indices - 1), row_indices - 1)
+        above = torch.min(
+            (self.rows.shape[0] - 1) * torch.ones_like(row_indices), row_indices
+        )
+        row_fracs = (u1 - self.rows[below, 0]) / (
+            self.rows[above, 0] - self.rows[below, 0]
+        )
+        row_indices = below
+
+        # For each row index, find the column index based on the random numbers u2 and the column CDF
+        # Use advanced indexing to vectorize the operation
+        col_indices = torch.searchsorted(
+            self.cols[row_indices], u2, right=True
+        ).squeeze(-1)
+        below = torch.max(torch.zeros_like(col_indices - 1), col_indices - 1)
+        above = torch.min(
+            (self.cols.shape[-1] - 1) * torch.ones_like(col_indices), col_indices
+        )
+        col_fracs = (u2.squeeze(-1) - self.cols[row_indices, below]) / (
+            self.cols[row_indices, above] - self.cols[row_indices, below]
+        )
+        col_indices = below
+
+        # Concatenate the row and column indices to get a 2D index for each sample
+        # Add the fractions to get continuous coordinates
+        uv = torch.stack(
+            [
+                (col_indices + col_fracs) / self.base_res[1],
+                (row_indices + row_fracs) / self.base_res[0],
+            ],
+            dim=1,
+        )
+
+        # Convert the 2D indices to spherical coordinates
+        theta = uv[:, 1] * np.pi
+        phi = uv[:, 0] * np.pi * 2 - np.pi
+
+        # Convert spherical coordinates to directions
+        sin_theta = torch.sin(theta)
+        cos_theta = torch.cos(theta)
+        sin_phi = torch.sin(phi)
+        cos_phi = torch.cos(phi)
+
+        directions = torch.stack(
+            [cos_phi * sin_theta, sin_phi * sin_theta, cos_theta], dim=1
+        )
+        directions = F.normalize(directions, dim=1)
+
+        return directions
+
+    @torch.no_grad()
+    def update_pdf(self):
+        # Evaluate the MLP at the pixel centers
+        XY = util.pixel_grid(self.base_res[1], self.base_res[0])
+
+        # Compute envmap from the MLP
+        envmap = self.eval_uv(XY.reshape(-1, 2)).reshape(
+            self.base_res[0], self.base_res[1], -1
+        )
+        # Compute PDF
+        Y = XY[..., 1]
+        self._pdf = torch.max(envmap, dim=-1)[0] * torch.sin(
+            Y * np.pi
+        )  # Scale by sin(theta) for lat-long, https://cs184.eecs.berkeley.edu/sp18/article/25
+        self._pdf[self._pdf <= 0] = 1e-6  # avoid divide by zero in sample()
+        self._pdf = self._pdf / torch.sum(self._pdf)  # discrete pdf
+
+        # Compute cumulative sums over the columns and rows
+        self.cols = torch.cumsum(self._pdf, dim=1)
+        self.rows = torch.cumsum(
+            self.cols[:, -1:].repeat([1, self.cols.shape[1]]), dim=0
+        )
+
+        # Normalize
+        # TODO: for columns/rows with all 0s, use uniform distribution
+        self.cols = self.cols / torch.where(
+            self.cols[:, -1:] > 0, self.cols[:, -1:], torch.ones_like(self.cols)
+        )
+        self.rows = self.rows / torch.where(
+            self.rows[-1:, :] > 0, self.rows[-1:, :], torch.ones_like(self.rows)
+        )
+
+        # Prepend 0s to all CDFs
+        self.cols = torch.cat([torch.zeros_like(self.cols[:, :1]), self.cols], dim=1)
+        self.rows = torch.cat([torch.zeros_like(self.rows[:1, :]), self.rows], dim=0)
+
+    @torch.no_grad()
+    def generate_image(self):
+        # Evaluate the MLP at the pixel centers
+        XY = util.pixel_grid(self.base_res[1], self.base_res[0])
+
+        # Compute envmap from the MLP
+        envmap = self.eval_uv(XY.reshape(-1, 2)).reshape(
             self.base_res[0], self.base_res[1], -1
         )
 

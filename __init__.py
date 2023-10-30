@@ -3,7 +3,12 @@ Copyright (c) 2023 Shaofei Wang, ETH Zurich.
 """
 
 from .utils.nvdiffrecmc_util import rgb_to_srgb, srgb_to_rgb, luminance, luma, max_value
-from .light import EnvironmentLightTensor, EnvironmentLightSG, EnvironmentLightMLP
+from .light import (
+    EnvironmentLightTensor,
+    EnvironmentLightSG,
+    EnvironmentLightMLP,
+    EnvironmentLightNGP,
+)
 from .bxdf import (
     Mirror,
     Lambertian,
@@ -19,6 +24,7 @@ __all__ = [
     "EnvironmentLightTensor",
     "EnvironmentLightSG",
     "EnvironmentLightMLP",
+    "EnvironmentLightNGP",
     "Mirror",
     "Lambertian",
     "GGX",
