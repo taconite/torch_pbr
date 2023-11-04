@@ -68,9 +68,8 @@ class EnvironmentLightBase(torch.nn.Module):
             device: The device to put the sampled directions on
             shuffle: Whether to shuffle the batches
         Returns:
-            A tuple (indices, pdfs) where:
-                indices: A tensor of shape (num_samples, 2) containing sampled row and column indices
-                pdfs: A tensor of shape (num_samples,) containing the pdf values of the sampled indices
+            directions: A tensor of shape (batch_size * n_rows * n_cols, 3) containing sampled directions
+            inv_pdf: A tensor of shape (batch_size * n_rows * n_cols, 1) containing the inverse PDFs of the sampled directions
         """
         lat_step_size = np.pi / n_rows
         lng_step_size = 2 * np.pi / n_cols
@@ -390,8 +389,8 @@ class EnvironmentLightSG(EnvironmentLightBase):
 
         self.register_parameter("lgtSGs", torch.nn.Parameter(lgtSGs))
 
-        self.pdf_scale = (self.base_res[0] * self.base_res[1]) / (2 * np.pi * np.pi)
-        self.update_pdf()
+        # self.pdf_scale = (self.base_res[0] * self.base_res[1]) / (2 * np.pi * np.pi)
+        # self.update_pdf()
 
     # def xfm(self, mtx):
     #     self.mtx = mtx
@@ -414,11 +413,19 @@ class EnvironmentLightSG(EnvironmentLightBase):
         Returns:
             A tensor of shape (N,) containing the PDFs for each input direction
         """
+        # TODO: implement precise SG pdf https://arxiv.org/pdf/2303.16617.pdf
+        raise NotImplementedError(
+            "pdf() function of EnvironmentLightSG is not implemented"
+        )
         # Convert the 3D directions to 2D indices in the environment map
-        phi = torch.atan2(directions[:, 1], directions[:, 0])  # Compute azimuth angle
-        theta = torch.acos(directions[:, 2])  # Compute elevation angle
-        u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
-        v = theta / np.pi  # Map elevation to [0, 1]
+        # phi = torch.atan2(directions[:, 1], directions[:, 0])  # Compute azimuth angle
+        # theta = torch.acos(directions[:, 2])  # Compute elevation angle
+        # u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
+        # v = theta / np.pi  # Map elevation to [0, 1]
+        lonlat = xyz2lonlat(directions)
+        _, theta = lonlat[:, 0], lonlat[:, 1]
+        uv = lonlat2uv(lonlat)
+        u, v = uv[:, 0], uv[:, 1]
 
         # Convert u, v to discrete indices
         col_indices = torch.clamp(
@@ -429,7 +436,7 @@ class EnvironmentLightSG(EnvironmentLightBase):
         )
 
         # Get PDF values at the indices
-        sin_theta = torch.sin(theta)
+        sin_theta = torch.sin(np.pi / 2.0 - theta)
         pdf_values = torch.where(
             sin_theta > 0,
             self._pdf[row_indices.long(), col_indices.long()]
@@ -461,6 +468,10 @@ class EnvironmentLightSG(EnvironmentLightBase):
                 indices: A tensor of shape (num_samples, 2) containing sampled row and column indices
                 pdfs: A tensor of shape (num_samples,) containing the pdf values of the sampled indices
         """
+        # TODO: implement precise SG sampling https://arxiv.org/pdf/2303.16617.pdf
+        raise NotImplementedError(
+            "sample() function of EnvironmentLightSG is not implemented"
+        )
         # Generate random numbers for rows and columns
         u1 = torch.rand(num_samples, device=self.lgtSGs.device)
         u2 = (
@@ -506,24 +517,30 @@ class EnvironmentLightSG(EnvironmentLightBase):
         )
 
         # Convert the 2D indices to spherical coordinates
-        theta = uv[:, 1] * np.pi
-        phi = uv[:, 0] * np.pi * 2 - np.pi
+        # theta = uv[:, 1] * np.pi
+        # phi = uv[:, 0] * np.pi * 2 - np.pi
+        lonlat = uv2lonlat(uv)
 
         # Convert spherical coordinates to directions
-        sin_theta = torch.sin(theta)
-        cos_theta = torch.cos(theta)
-        sin_phi = torch.sin(phi)
-        cos_phi = torch.cos(phi)
+        # sin_theta = torch.sin(theta)
+        # cos_theta = torch.cos(theta)
+        # sin_phi = torch.sin(phi)
+        # cos_phi = torch.cos(phi)
 
-        directions = torch.stack(
-            [cos_phi * sin_theta, sin_phi * sin_theta, cos_theta], dim=1
-        )
+        # directions = torch.stack(
+        #     [cos_phi * sin_theta, sin_phi * sin_theta, cos_theta], dim=1
+        # )
+        directions = lonlat2xyz(lonlat)
         directions = F.normalize(directions, dim=1)
 
         return directions
 
     @torch.no_grad()
     def update_pdf(self):
+        # TODO: implement precise SG pdf https://arxiv.org/pdf/2303.16617.pdf
+        raise NotImplementedError(
+            "sample() function of EnvironmentLightSG is not implemented"
+        )
         # Evaluate SGs at the pixel centers
         XY = util.pixel_grid(self.base_res[1], self.base_res[0])
 
@@ -574,6 +591,8 @@ class EnvironmentLightSG(EnvironmentLightBase):
 
     @torch.no_grad()
     def generate_image(self):
+        # Just for visualization, we use the spherical coordinate instead of
+        # geographical coordinates
         # Evaluate SGs at the pixel centers
         XY = util.pixel_grid(self.base_res[1], self.base_res[0])
 
