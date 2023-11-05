@@ -68,8 +68,12 @@ class EnvironmentLightBase(torch.nn.Module):
             device: The device to put the sampled directions on
             shuffle: Whether to shuffle the batches
         Returns:
-            directions: A tensor of shape (batch_size * n_rows * n_cols, 3) containing sampled directions
-            inv_pdf: A tensor of shape (batch_size * n_rows * n_cols, 1) containing the inverse PDFs of the sampled directions
+            directions: A tensor of shape (batch_size * n_rows * n_cols, 3)
+                        containing sampled directions
+            inv_pdf: A tensor of shape (batch_size * n_rows * n_cols, 1)
+                     containing the inverse PDFs of the sampled directions
+            inv_pdf_normalized: A tensor of shape (batch_size * n_rows * n_cols,
+                    1) containing the normalized inverse PDFs of the sampled directions
         """
         lat_step_size = np.pi / n_rows
         lng_step_size = 2 * np.pi / n_cols
@@ -95,8 +99,14 @@ class EnvironmentLightBase(torch.nn.Module):
         sin_theta = torch.sin(
             torch.pi / 2 - theta
         )  # convert theta from [pi/2, -pi/2] to [0, pi]
-        inv_pdf = 4 * torch.pi * sin_theta / torch.sum(sin_theta)  # [H, W]
+        inv_pdf = 4 * torch.pi * sin_theta  # [H, W]
+        # inv_pdf_normalized = 4 * torch.pi * sin_theta / torch.sum(sin_theta)  # [H, W]
+        inv_pdf_vis = n_rows * n_cols * sin_theta / torch.sum(sin_theta)  # [H, W]
         inv_pdf = inv_pdf.unsqueeze(0).repeat(batch_size, 1, 1)  # [B, H, W]
+        # inv_pdf_normalized = (
+        #     inv_pdf_normalized.unsqueeze(0).repeat(batch_size, 1, 1)  # [B, H, W]
+        # )
+        inv_pdf_vis = inv_pdf_vis.unsqueeze(0).repeat(batch_size, 1, 1)  # [B, H, W]
         if self.training:
             phi_jitter = lng_step_size * (
                 torch.rand(batch_size, n_rows, n_cols, device=device) - 0.5
@@ -120,8 +130,12 @@ class EnvironmentLightBase(torch.nn.Module):
         if not self.training:
             directions = directions.unsqueeze(0).repeat(batch_size, 1, 1, 1)
 
-        # Final return: [B*H*W, 3], [B*H*W, 1]
-        return directions.reshape(-1, 3), inv_pdf.reshape(-1, 1)
+        # Final return: [B*H*W, 3], [B*H*W, 1], [B*H*W, 1]
+        return (
+            directions.reshape(-1, 3),
+            inv_pdf.reshape(-1, 1),
+            inv_pdf_vis.reshape(-1, 1),
+        )
 
 
 # @models.register("envlight-tensor")
