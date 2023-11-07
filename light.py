@@ -7,6 +7,7 @@ import tinycudann as tcnn
 
 from omegaconf import OmegaConf
 from .utils import nvdiffrecmc_util as util
+from .utils.warp_utils import sample_uniform_sphere
 from .utils.light_utils import (
     compute_energy,
     fibonacci_sphere,
@@ -52,7 +53,7 @@ class EnvironmentLightBase(torch.nn.Module):
         raise NotImplementedError("EnvironmentLightBase is an abstract class")
 
     @torch.no_grad()
-    def sample_stratified(
+    def sample_equirectangular_stratified(
         self,
         batch_size: int,
         n_rows: int,
@@ -60,7 +61,11 @@ class EnvironmentLightBase(torch.nn.Module):
         device: torch.device,
     ):
         """
-        Stratified sampling of the environment map. Modified from TensoIR's implementation.
+        Sampling of the environment map with potentially sample stratification
+        during training. Modified from TensoIR's implementation.  Note that here
+        we uniformly sample pixels from the equirectangular environment map,
+        this is NOT equivalent to uniformly sampling directions on the sphere,
+        thus the returned inverse PDFs will have small values at the poles.
         Args:
             batch_size: The number of batches (pixels) to sample
             n_rows: The number of rows for each batch
@@ -99,7 +104,8 @@ class EnvironmentLightBase(torch.nn.Module):
         sin_theta = torch.sin(
             torch.pi / 2 - theta
         )  # convert theta from [pi/2, -pi/2] to [0, pi]
-        inv_pdf = 4 * torch.pi * sin_theta  # [H, W]
+        inv_pdf = 4 * torch.pi * sin_theta  # [H, W]    # no normalization - normalization is handled
+                                                        # by volumetric rendering weights
         # inv_pdf_normalized = 4 * torch.pi * sin_theta / torch.sum(sin_theta)  # [H, W]
         inv_pdf_vis = n_rows * n_cols * sin_theta / torch.sum(sin_theta)  # [H, W]
         inv_pdf = inv_pdf.unsqueeze(0).repeat(batch_size, 1, 1)  # [B, H, W]
@@ -134,8 +140,67 @@ class EnvironmentLightBase(torch.nn.Module):
         return (
             directions.reshape(-1, 3),
             inv_pdf.reshape(-1, 1),
-            inv_pdf_vis.reshape(-1, 1),
+            # inv_pdf_vis.reshape(-1, 1),
         )
+
+    @torch.no_grad()
+    def sample_uniform_sphere_stratified(
+        self,
+        batch_size: int,
+        n_rows: int,
+        n_cols: int,
+        device: torch.device,
+    ):
+        """
+        Uniform sampling of the environment map with potentially sample
+        stratification during training.
+        Args:
+            batch_size: The number of batches (pixels) to sample
+            n_rows: The number of rows for each batch
+            n_cols: The number of columns for each batch
+            device: The device to put the sampled directions on
+            shuffle: Whether to shuffle the batches
+        Returns:
+            directions: A tensor of shape (batch_size * n_rows * n_cols, 3)
+                        containing sampled directions
+            inv_pdf: A tensor of shape (batch_size * n_rows * n_cols, 1)
+                     containing the inverse PDFs of the sampled directions
+            inv_pdf_normalized: A tensor of shape (batch_size * n_rows * n_cols,
+                    1) containing the normalized inverse PDFs of the sampled directions
+        """
+        # Evaluate envmap at the pixel centers
+        v, u = torch.meshgrid(
+            (torch.arange(0, n_rows, dtype=torch.float32, device=device) + 0.5),
+            (torch.arange(0, n_cols, dtype=torch.float32, device=device) + 0.5),
+        )
+
+        # Add jitter during training
+        if self.training:
+            u = u[None, ...] + (torch.rand(batch_size, n_rows, n_cols, device=device) - 0.5)
+            v = v[None, ...] + (torch.rand(batch_size, n_rows, n_cols, device=device) - 0.5)
+
+        u = u / n_cols
+        v = v / n_rows
+
+        assert (u >= 0).all() and (u <= 1).all()
+        assert (v >= 0).all() and (v <= 1).all()
+
+        # Warp random samples onto a unit sphere
+        # we use [v, u] instead of [u, v] becaue `sample_uniform_sphere` will
+        # map the first column to z-axis
+        directions = sample_uniform_sphere(
+            torch.stack([v, u], dim=-1).reshape(-1, 2)
+        ).reshape(-1, 3)
+        directions = F.normalize(directions, dim=-1)
+
+        if not self.training:
+            directions = directions.repeat(batch_size, 1)
+
+        inv_pdf = (
+            torch.ones_like(directions[..., :1]) * 4 * torch.pi
+        )  # no normalization - normalization is handled by volumetric rendering weights
+
+        return directions, inv_pdf.reshape(-1, 1)
 
 
 # @models.register("envlight-tensor")

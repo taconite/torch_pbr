@@ -185,13 +185,34 @@ def sample_uniform_cylinder(sample):
 
 
 @torch.no_grad()
+def sample_uniform_sphere(sample):
+    """Sample points uniformly on a unit sphere
+    :param sample: 2D samples for the sphere sampling
+    :return: sampled outgoing directions
+    """
+    wo = sample_uniform_cylinder(sample)
+    r = torch.sqrt(torch.clamp(1.0 - wo[:, 2]**2, min=0.0))
+    wo[:, 0] *= r
+    wo[:, 1] *= r
+
+    return wo
+
+
+def eval_uniform_sphere(wo):
+    """Compute the PDF of the uniform sphere
+    :param v: sampled outgoing directions
+    :return: PDF of the uniform sphere
+    """
+    return torch.ones_like(wo[:, 0]) / (4.0 * np.pi)
+
+
+@torch.no_grad()
 def sample_uniform_hemisphere(sample, n):
     """Sample points uniformly on a hemisphere definede by normal n
     :param sample: 2D samples for the hemisphere sampling
     :param n: normal directions
     :return: sampled outgoing directions
     """
-    # Sample diffuse reflectance
     t, b = coordinate_system(n)
     # Vector3f v = squareToUniformCylinder(sample);
     wo = sample_uniform_cylinder(sample)
