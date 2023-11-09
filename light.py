@@ -319,7 +319,10 @@ class EnvironmentLightTensor(EnvironmentLightBase):
         # Squeeze the batch dimension and transpose the result to match the input shape
         intensity = intensity.reshape(self.base.shape[-1], -1).transpose(0, 1)
 
-        return F.softplus(intensity, beta=100)
+        if self.training:
+            return F.softplus(intensity, beta=100)
+        else:
+            return intensity
 
     @torch.no_grad()
     def sample(self, num_samples: int):
