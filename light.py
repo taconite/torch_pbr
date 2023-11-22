@@ -34,11 +34,13 @@ class EnvironmentLightBase(torch.nn.Module):
             self.lonlat2uv = lonlat2uv_blender
             self.uv2lonlat = uv2lonlat_blender
             self.lonlat2xyz = lonlat2xyz_blender
+            self.sin_func = lambda theta: torch.sin(theta)
         else:
             self.xyz2lonlat = xyz2lonlat
             self.lonlat2uv = lonlat2uv
             self.uv2lonlat = uv2lonlat
             self.lonlat2xyz = lonlat2xyz
+            self.sin_func = lambda theta: torch.sin(np.pi / 2.0 - theta)
         super(EnvironmentLightBase, self).__init__()
 
     # def clone(self):
@@ -115,9 +117,7 @@ class EnvironmentLightBase(torch.nn.Module):
             ],
             indexing="ij",
         )
-        sin_theta = torch.sin(
-            torch.pi / 2 - theta
-        )  # convert theta from [pi/2, -pi/2] to [0, pi]
+        sin_theta = self.sin_func(theta)
         inv_pdf = 4 * torch.pi * sin_theta  # [H, W]    # no normalization - normalization is handled
                                                         # by volumetric rendering weights
         # inv_pdf_normalized = 4 * torch.pi * sin_theta / torch.sum(sin_theta)  # [H, W]
@@ -284,7 +284,7 @@ class EnvironmentLightTensor(EnvironmentLightBase):
         )
 
         # Get PDF values at the indices
-        sin_theta = torch.sin(np.pi / 2.0 - theta)
+        sin_theta = self.sin_func(theta)
         pdf_values = torch.where(
             sin_theta > 0,
             self._pdf[row_indices.long(), col_indices.long()]
@@ -532,7 +532,7 @@ class EnvironmentLightSG(EnvironmentLightBase):
         )
 
         # Get PDF values at the indices
-        sin_theta = torch.sin(np.pi / 2.0 - theta)
+        sin_theta = self.sin_func(theta)
         pdf_values = torch.where(
             sin_theta > 0,
             self._pdf[row_indices.long(), col_indices.long()]
@@ -772,7 +772,7 @@ class EnvironmentLightMLP(EnvironmentLightBase):
         )
 
         # Get PDF values at the indices
-        sin_theta = torch.sin(theta)
+        sin_theta = self.sin_func(theta)
         pdf_values = torch.where(
             sin_theta > 0,
             self._pdf[row_indices.long(), col_indices.long()]
@@ -1001,7 +1001,7 @@ class EnvironmentLightNGP(EnvironmentLightBase):
         )
 
         # Get PDF values at the indices
-        sin_theta = torch.sin(np.pi / 2.0 - theta)
+        sin_theta = self.sin_func(theta)
         pdf_values = torch.where(
             sin_theta > 0,
             self._pdf[row_indices.long(), col_indices.long()]
