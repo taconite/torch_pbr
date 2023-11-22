@@ -63,6 +63,66 @@ def uv2lonlat(uv):
     return lonlat
 
 
+def xyz2lonlat_blender(xyz):
+    """Convert 3D coordinates to longitude-latitude coordinates.
+    Args:
+        xyz: (..., 3) tensor of 3D coordinates.
+    Returns:
+        lonlat: (..., 2) tensor of longitude-latitude coordinates.
+    """
+    lon = torch.atan2(xyz[..., 1], xyz[..., 0]) # [-pi, pi]
+    lat = torch.acos(xyz[..., 2] / torch.linalg.norm(xyz, dim=-1)) # [0, pi]
+    lonlat = torch.stack([lon, lat], dim=-1)
+    return lonlat
+
+
+def lonlat2xyz_blender(lonlat):
+    """Convert longitude-latitude coordinates to 3D coordinates.
+    Args:
+        lonlat: (..., 2) tensor of longitude-latitude coordinates.
+    Returns:
+        xyz: (..., 3) tensor of 3D coordinates.
+    """
+    lon = lonlat[..., 0]
+    lat = lonlat[..., 1]
+    x = torch.cos(lon) * torch.sin(lat)
+    y = torch.sin(lon) * torch.sin(lat)
+    z = torch.cos(lat)
+    xyz = torch.stack([x, y, z], dim=-1)
+    return xyz
+
+
+def lonlat2uv_blender(lonlat):
+    """Convert longitude-latitude coordinates to 2D coordinates.
+    Args:
+        lonlat: (..., 2) tensor of longitude-latitude coordinates.
+    Returns:
+        uv: (..., 2) tensor of 2D coordinates.
+    """
+    lon = lonlat[..., 0]
+    lat = lonlat[..., 1]
+    x = -lon / (2 * np.pi) + 0.5
+    y = lat / np.pi
+    uv = torch.stack([x, y], dim=-1)
+    return uv
+
+
+def uv2lonlat_blender(uv):
+    """Convert 2D coordinates to longitude-latitude coordinates.
+    Args:
+        uv: (..., 2) tensor of 2D coordinates.
+        shape: (2,) tuple of image shape.
+    Returns:
+        lonlat: (..., 2) tensor of longitude-latitude coordinates.
+    """
+    x = uv[..., 0]
+    y = uv[..., 1]
+    lon = -(x - 0.5) * 2 * np.pi
+    lat = y * np.pi
+    lonlat = torch.stack([lon, lat], dim=-1)
+    return lonlat
+
+
 def compute_energy(lgtSGs):
     """Compute the total energy of a light source represented as mixture of
     Spherical Gaussians (SGs).  The energy is computed as the integral of the

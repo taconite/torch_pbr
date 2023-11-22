@@ -16,6 +16,10 @@ from .utils.light_utils import (
     lonlat2uv,
     uv2lonlat,
     lonlat2xyz,
+    xyz2lonlat_blender,
+    lonlat2uv_blender,
+    uv2lonlat_blender,
+    lonlat2xyz_blender,
 )
 
 ######################################################################################
@@ -25,6 +29,16 @@ from .utils.light_utils import (
 
 class EnvironmentLightBase(torch.nn.Module):
     def __init__(self, config):
+        if config.xyz2lonlat_mode == "blender":
+            self.xyz2lonlat = xyz2lonlat_blender
+            self.lonlat2uv = lonlat2uv_blender
+            self.uv2lonlat = uv2lonlat_blender
+            self.lonlat2xyz = lonlat2xyz_blender
+        else:
+            self.xyz2lonlat = xyz2lonlat
+            self.lonlat2uv = lonlat2uv
+            self.uv2lonlat = uv2lonlat
+            self.lonlat2xyz = lonlat2xyz
         super(EnvironmentLightBase, self).__init__()
 
     # def clone(self):
@@ -131,7 +145,7 @@ class EnvironmentLightBase(torch.nn.Module):
         #     ],
         #     dim=-1,
         # )  # training: [B, H, W, 3], testing: [H, W, 3]
-        directions = lonlat2xyz(torch.stack([phi, theta], dim=-1))
+        directions = self.lonlat2xyz(torch.stack([phi, theta], dim=-1))
         directions = F.normalize(directions, dim=-1)
         if not self.training:
             directions = directions.unsqueeze(0).repeat(batch_size, 1, 1, 1)
@@ -256,9 +270,9 @@ class EnvironmentLightTensor(EnvironmentLightBase):
         # theta = torch.acos(directions[:, 2])  # Compute elevation angle
         # u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
         # v = theta / np.pi  # Map elevation to [0, 1]
-        lonlat = xyz2lonlat(directions)
+        lonlat = self.xyz2lonlat(directions)
         _, theta = lonlat[:, 0], lonlat[:, 1]
-        uv = lonlat2uv(lonlat)
+        uv = self.lonlat2uv(lonlat)
         u, v = uv[:, 0], uv[:, 1]
 
         # Convert u, v to discrete indices
@@ -295,8 +309,8 @@ class EnvironmentLightTensor(EnvironmentLightBase):
         # theta = torch.acos(directions[:, 2])  # Compute elevation angle
         # u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
         # v = theta / np.pi  # Map elevation to [0, 1]
-        lonlat = xyz2lonlat(directions)
-        uv = lonlat2uv(lonlat)
+        lonlat = self.xyz2lonlat(directions)
+        uv = self.lonlat2uv(lonlat)
         u, v = uv[:, 0], uv[:, 1]
         assert (u >= 0).all() and (u <= 1).all()
         assert (v >= 0).all() and (v <= 1).all()
@@ -380,7 +394,7 @@ class EnvironmentLightTensor(EnvironmentLightBase):
         # Convert the 2D indices to spherical coordinates
         # theta = uv[:, 1] * np.pi
         # phi = uv[:, 0] * np.pi * 2 - np.pi
-        lonlat = uv2lonlat(uv)
+        lonlat = self.uv2lonlat(uv)
 
         # Convert spherical coordinates to directions
         # sin_theta = torch.sin(theta)
@@ -391,7 +405,7 @@ class EnvironmentLightTensor(EnvironmentLightBase):
         # directions = torch.stack(
         #     [cos_phi * sin_theta, sin_phi * sin_theta, cos_theta], dim=1
         # )
-        directions = lonlat2xyz(lonlat)
+        directions = self.lonlat2xyz(lonlat)
         directions = F.normalize(directions, dim=1)
 
         return directions
@@ -504,9 +518,9 @@ class EnvironmentLightSG(EnvironmentLightBase):
         # theta = torch.acos(directions[:, 2])  # Compute elevation angle
         # u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
         # v = theta / np.pi  # Map elevation to [0, 1]
-        lonlat = xyz2lonlat(directions)
+        lonlat = self.xyz2lonlat(directions)
         _, theta = lonlat[:, 0], lonlat[:, 1]
-        uv = lonlat2uv(lonlat)
+        uv = self.lonlat2uv(lonlat)
         u, v = uv[:, 0], uv[:, 1]
 
         # Convert u, v to discrete indices
@@ -601,7 +615,7 @@ class EnvironmentLightSG(EnvironmentLightBase):
         # Convert the 2D indices to spherical coordinates
         # theta = uv[:, 1] * np.pi
         # phi = uv[:, 0] * np.pi * 2 - np.pi
-        lonlat = uv2lonlat(uv)
+        lonlat = self.uv2lonlat(uv)
 
         # Convert spherical coordinates to directions
         # sin_theta = torch.sin(theta)
@@ -612,7 +626,7 @@ class EnvironmentLightSG(EnvironmentLightBase):
         # directions = torch.stack(
         #     [cos_phi * sin_theta, sin_phi * sin_theta, cos_theta], dim=1
         # )
-        directions = lonlat2xyz(lonlat)
+        directions = self.lonlat2xyz(lonlat)
         directions = F.normalize(directions, dim=1)
 
         return directions
@@ -973,9 +987,9 @@ class EnvironmentLightNGP(EnvironmentLightBase):
         # theta = torch.acos(directions[:, 2])  # Compute elevation angle
         # u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
         # v = theta / np.pi  # Map elevation to [0, 1]
-        lonlat = xyz2lonlat(directions)
+        lonlat = self.xyz2lonlat(directions)
         _, theta = lonlat[:, 0], lonlat[:, 1]
-        uv = lonlat2uv(lonlat)
+        uv = self.lonlat2uv(lonlat)
         u, v = uv[:, 0], uv[:, 1]
 
         # Convert u, v to discrete indices
@@ -1024,8 +1038,8 @@ class EnvironmentLightNGP(EnvironmentLightBase):
         # theta = torch.acos(directions[:, 2])  # Compute elevation angle
         # u = (phi + np.pi) / (2 * np.pi)  # Map azimuth to [0, 1]
         # v = theta / np.pi  # Map elevation to [0, 1]
-        lonlat = xyz2lonlat(directions)
-        uv = lonlat2uv(lonlat)
+        lonlat = self.xyz2lonlat(directions)
+        uv = self.lonlat2uv(lonlat)
         u, v = uv[:, 0], uv[:, 1]
         assert (u >= 0).all() and (u <= 1).all()
         assert (v >= 0).all() and (v <= 1).all()
@@ -1093,7 +1107,7 @@ class EnvironmentLightNGP(EnvironmentLightBase):
         # Convert the 2D indices to spherical coordinates
         # theta = uv[:, 1] * np.pi
         # phi = uv[:, 0] * np.pi * 2 - np.pi
-        lonlat = uv2lonlat(uv)
+        lonlat = self.uv2lonlat(uv)
 
         # Convert spherical coordinates to directions
         # sin_theta = torch.sin(theta)
@@ -1104,7 +1118,7 @@ class EnvironmentLightNGP(EnvironmentLightBase):
         # directions = torch.stack(
         #     [cos_phi * sin_theta, sin_phi * sin_theta, cos_theta], dim=1
         # )
-        directions = lonlat2xyz(lonlat)
+        directions = self.lonlat2xyz(lonlat)
         directions = F.normalize(directions, dim=1)
 
         return directions
