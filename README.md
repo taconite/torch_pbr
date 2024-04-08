@@ -14,3 +14,9 @@ If you find our code useful, please cite:
   year    = {2024}
 }
 ```
+
+## TODO
+- [ ] Implement importance sampling and PDF evaluation for `EnvironmentLightSG` (https://arxiv.org/abs/2303.16617)
+
+## Acknowledgement
+The basic utility functions in `utils/nvdiffrecmc_util.py` are borrowed from [nvdiffrecmc](https://github.com/NVlabs/nvdiffrecmc). We thank authors of the paper for their wonderful works which greatly facilitates the development of this project.
